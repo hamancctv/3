@@ -1061,7 +1061,7 @@ function makeOverListener(map, marker2, infowindow) {
         $('#gpsyx').val(latlng.getLat() + ', ' + latlng.getLng());  
 var content = infowindow.getContent();
 var value, name, item, i;
-        value = content;
+        value = content.substring(0, 5);
         item = document.getElementsByClassName("sel_txt");
         for(i=0;i<item.length;i++){
           name = item[i].getElementsByClassName("name");
