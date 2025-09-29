@@ -1,48 +1,449 @@
 <!DOCTYPE html>
-<html>
+<html lang="ko">
 <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta charset="utf-8">
-    <title>GIS 모바일</title>
-    <link rel="icon" href="https://hamancctv.github.io/5/favicon.ico" sizes="32x32"/>
-    <link rel="stylesheet" href="style.css">
+<meta charset="utf-8" />
+<title>200 마커 + 200 자동완성 + 이름검색 (Kakao Sample)</title>
+<style>
+  /* 샘플 페이지에서는 map에 고정 높이를 주세요 */
+  #map { width:100%; height:500px; }
+
+  .search-container {
+    position: relative; /* 드롭다운 기준 */
+    width: 420px; margin: 10px auto 0; display: flex; gap: 6px; z-index: 600;
+  }
+  .search-container input {
+    flex:1; height: 38px; padding: 0 10px; border:1px solid #ccc; border-radius: 8px;
+    background:#fff; font-size:14px;
+  }
+  .search-container button {
+    height: 38px; padding: 0 14px; border:1px solid #ccc; border-radius: 8px; cursor: pointer;
+  }
+
+  /* 오버레이 기본 스타일 (마커 핸들러에서 사용) */
+  .overlay-hover{
+    padding:2px 6px;
+    background:rgba(255,255,255,0.80);
+    border:1px solid #ccc;
+    border-radius:5px;
+    font-size:14px;
+    white-space:nowrap;
+    user-select:none;
+    transition:transform .15s ease, border .15s ease, background .15s ease;
+    will-change:transform, border;
+    transform:translateZ(0);
+    backface-visibility:hidden;
+  }
+</style>
+<!-- Kakao Maps SDK (샘플 페이지에선 임의 키 가능) -->
+<script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=YOUR_APP_KEY&autoload=false"></script>
 </head>
 <body>
-    <div id="alert-overlay"><div id="alert-message"></div></div>
-    <button id="btnDistance">거리</button>
 
-    <div id="container">
-        <div id="rvWrapper">
-            <div id="roadview" style="width:100%;height:100%;"></div>
-            <div id="close" title="로드뷰닫기"><span class="img"></span></div>
-        </div>
-        <div id="mapWrapper">
-            <div id="map" style="width:100%;height:100%"></div>
-            <div id="roadviewControl"></div>
-        </div>
-    </div>
+<div class="search-container">
+  <input id="keyword" type="search" placeholder="예) ㅎㅇㅈㅎㄱ 또는 ㄷ032" autocomplete="off" />
+  <button id="btnSearch" type="button">검색</button>
+  <div id="suggest-box"></div>
+</div>
 
-    <div class="search-container">
-        <input type="search" id="keyword" autocomplete="off" placeholder="검색어 입력"/>
-        <button id="searchBtn">검색</button>
-    </div>
+<div id="map"></div>
 
-    <div class="toolbar-right">
-        <input type="text" id="gpsyx" class="input-common" inputmode="none" value="35.2725308711779, 128.406307024695"/>
-        <button id="btn_input_copy" class="btn-common">복사</button>
-    </div>
+<script>
+kakao.maps.load(function () {
 
-    <div class="custom_typecontrol2_m radius_border">
-        <span id="toggle_group" class="btn btn-common">회선</span>
-        <span id="btnCurrentMe" class="btn btn-common">위치</span>
-        <span id="btnTrackMe" class="btn btn-common">추적</span>
-    </div>
+  /* ===== 맵 생성 ===== */
+  const mapCenter = new kakao.maps.LatLng(35.27253, 128.406307);
+  const map = new kakao.maps.Map(document.getElementById('map'), { center: mapCenter, level: 5 });
+  map.setMaxLevel(9);
+  window.map = map;
 
-    <div id="menu_wrap" class="bg_white" style="border:1px solid #919191;border-radius:10px;">
-        </div>
+  /* ===== 랜덤 200개 데이터 생성 ===== */
+  const BBOX = {
+    sw: {lat:35.119382493091855, lng:128.18218076324376},
+    ne: {lat:35.42383291087308,  lng:128.59320201946082}
+  };
+  const rand = (min,max)=>Math.random()*(max-min)+min;
+  const randLat = ()=>rand(BBOX.sw.lat, BBOX.ne.lat);
+  const randLng = ()=>rand(BBOX.sw.lng, BBOX.ne.lng);
 
-    <script type="text/javascript" src="//dapi.kakao.com/v2/maps/sdk.js?appkey=2634b7b6dd61e41a4d6c0bf40a2ef820&libraries=services,clusterer,drawing"></script>
-    <script type="text/javascript" src="https://hamancctv.github.io/5/positions.js"></script>
-    <script type="text/javascript" src="script.js"></script>
+  const TOWNS = ["함안군","가야읍","군북면","칠서면","칠북면","대산면","산인면","여항면","법수면"];
+  const FAC   = ["보건소","주민센터","체육공원","초등학교","중학교","고등학교","도서관","파출소","소방서","공영주차장","경로당","문화센터"];
+  const pad = (n,len=3)=>String(n).padStart(len,'0');
+  const makeName = (i)=>{
+    if (i % 5 === 0) return `도-${pad( Math.floor(Math.random()*999) )}`; // 코드형 샘플
+    const town = TOWNS[Math.floor(Math.random()*TOWNS.length)];
+    const fac  = FAC[Math.floor(Math.random()*FAC.length)];
+    return `${town} ${fac}`;
+  };
+
+  const positions = [];
+  const SEL_SUGGEST = [];
+  for (let i=0; i<200; i++){
+    const lat = randLat(), lng = randLng();
+    const name = makeName(i) + " " + (i+1); // 구분용 번호
+    positions.push({ latlng: new kakao.maps.LatLng(lat, lng), content: name });
+    SEL_SUGGEST.push({ name, lat, lng });
+  }
+  window.positions = positions;
+  window.SEL_SUGGEST = SEL_SUGGEST;
+
+  /* ===== 마커/오버레이 핸들러 (선택 고정/호버 전면/점프/파란테두리) ===== */
+  (function () {
+    const Z = { BASE:100, FRONT:100000 };
+    let selectedMarker=null, selectedOverlayEl=null, selectedOverlayObj=null;
+    let frontMarker=null, frontOverlay=null, frontReason=null; // 'hover'|'clickMarker'|'clickOverlay'
+    let normalImage, hoverImage, jumpImage, clickStartTime=0;
+
+    const normalH=42, hoverH=50.4, gap=2;
+    const baseY  = -(normalH + gap);
+    const hoverY = -(hoverH  + gap);
+    const jumpY  = -(70      + gap);
+
+    const setDefaultZ=(m,o)=>{ if(m) m.setZIndex(Z.BASE+1); if(o) o.setZIndex(Z.BASE); }; // 기본: 마커 > 오버레이
+    const setFrontZ  =(m,o)=>{ if(m) m.setZIndex(Z.FRONT);   if(o) o.setZIndex(Z.FRONT+1); }; // 전면: 오버레이 > 마커
+    function bringToFront(map, marker, overlay, reason){
+      if (frontMarker && frontOverlay && (frontMarker!==marker || frontOverlay!==overlay)) {
+        setDefaultZ(frontMarker, frontOverlay);
+        if (map.getLevel()>3 && frontMarker !== selectedMarker) frontOverlay.setMap(null);
+      }
+      overlay.setMap(map);
+      setFrontZ(marker, overlay);
+      frontMarker=marker; frontOverlay=overlay; frontReason=reason;
+    }
+
+    // 지도 클릭: 파란 테두리만 해제(전면/레이어는 유지)
+    kakao.maps.event.addListener(map, "click", function(){
+      if (selectedOverlayEl) selectedOverlayEl.style.border="1px solid #ccc";
+      selectedMarker = null; selectedOverlayEl = null; selectedOverlayObj = null;
+    });
+
+    window.initMarkers = function(map, positions){
+      normalImage = new kakao.maps.MarkerImage(
+        "https://t1.daumcdn.net/localimg/localimages/07/2018/pc/img/marker_spot.png",
+        new kakao.maps.Size(30,42), { offset: new kakao.maps.Point(15,42) }
+      );
+      hoverImage = new kakao.maps.MarkerImage(
+        "https://t1.daumcdn.net/localimg/localimages/07/2018/pc/img/marker_spot.png",
+        new kakao.maps.Size(36,50.4), { offset: new kakao.maps.Point(18,50.4) }
+      );
+      jumpImage = new kakao.maps.MarkerImage(
+        "https://t1.daumcdn.net/localimg/localimages/07/2018/pc/img/marker_spot.png",
+        new kakao.maps.Size(30,42), { offset: new kakao.maps.Point(15,70) }
+      );
+
+      const markers=[]; const overlays=[];
+      const batchSize=50; let idx=0;
+
+      function createBatch(){
+        const end=Math.min(positions.length, idx+batchSize);
+        for (let i=idx;i<end;i++){
+          (function(i){
+            const pos=positions[i];
+            const marker=new kakao.maps.Marker({ map, position:pos.latlng, image:normalImage, clickable:true, zIndex:Z.BASE+1 });
+
+            const el=document.createElement("div");
+            el.className="overlay-hover";
+            el.style.transform=`translateY(${baseY}px)`;
+            el.textContent=pos.content;
+
+            const overlay=new kakao.maps.CustomOverlay({ position:pos.latlng, content:el, yAnchor:1, map:null });
+            overlay.setZIndex(Z.BASE);
+
+            marker.__overlay=overlay; overlay.__marker=marker;
+
+            function onOver(){
+              marker.setImage(hoverImage);
+              bringToFront(map, marker, overlay, 'hover');
+              el.style.transform=(marker===selectedMarker)?`translateY(${hoverY-2}px)`: `translateY(${hoverY}px)`;
+            }
+            function onOut(){
+              marker.setImage(normalImage);
+              const wasHoverFront = (frontMarker===marker && frontOverlay===overlay && frontReason==='hover');
+              if (wasHoverFront){
+                el.style.transform=`translateY(${baseY}px)`;
+                // 파란테두리 선택쌍이 있으면 다시 전면 복귀
+                if (selectedMarker && selectedOverlayObj){
+                  bringToFront(map, selectedMarker, selectedOverlayObj, 'clickMarker');
+                  selectedOverlayEl && (selectedOverlayEl.style.border="2px solid blue");
+                  selectedOverlayEl && (selectedOverlayEl.style.transform=`translateY(${baseY-2}px)`);
+                }
+                return;
+              }
+              if (marker===selectedMarker){
+                el.style.transform=`translateY(${baseY-2}px)`; el.style.border="2px solid blue";
+                bringToFront(map, selectedMarker, selectedOverlayObj||overlay, 'clickMarker');
+              } else {
+                el.style.transform=`translateY(${baseY}px)`;
+                if (map.getLevel()>3 && overlay!==frontOverlay && overlay!==selectedOverlayObj) overlay.setMap(null);
+                if (!(frontMarker===marker && frontOverlay===overlay)) setDefaultZ(marker, overlay);
+                if (frontMarker && frontOverlay) setFrontZ(frontMarker, frontOverlay);
+              }
+            }
+
+            kakao.maps.event.addListener(marker, "mouseover", onOver);
+            kakao.maps.event.addListener(marker, "mouseout",  onOut);
+            el.addEventListener("mouseover", onOver);
+            el.addEventListener("mouseout",  onOut);
+
+            kakao.maps.event.addListener(marker, "mousedown", function(){
+              marker.setImage(jumpImage); clickStartTime=Date.now();
+              if (selectedOverlayEl) selectedOverlayEl.style.border="1px solid #ccc";
+              selectedMarker=marker; selectedOverlayEl=el; selectedOverlayObj=overlay;
+              bringToFront(map, marker, overlay, 'clickMarker');
+              el.style.border="2px solid blue"; el.style.transform=`translateY(${jumpY-2}px)`;
+            });
+            kakao.maps.event.addListener(marker, "mouseup", function(){
+              const elapsed=Date.now()-clickStartTime; const delay=Math.max(0,100-elapsed);
+              setTimeout(function(){
+                marker.setImage(normalImage);
+                el.style.border="2px solid blue";
+                el.style.transition="transform .2s ease, border .2s ease";
+                el.style.transform=`translateY(${baseY-2}px)`;
+                bringToFront(map, marker, overlay, 'clickMarker');
+                setTimeout(()=>{ el.style.transition="transform .15s ease, border .15s ease"; }, 200);
+              }, delay);
+            });
+
+            // 오버레이 클릭: 전면만(테두리/입력X)
+            el.addEventListener("click", function(){
+              bringToFront(map, marker, overlay, 'clickOverlay');
+              el.style.border="1px solid #ccc";
+              el.style.transform=`translateY(${baseY}px)`;
+            });
+
+            markers.push(marker); overlays.push(overlay);
+          })(i);
+        }
+        idx=end;
+        if (idx<positions.length) setTimeout(createBatch, 0); else window.markers=markers;
+      }
+      createBatch();
+
+      kakao.maps.event.addListener(map, "idle", function(){
+        const level=map.getLevel();
+        overlays.forEach(o=>{
+          const m=o.__marker; if(!m) return;
+          if ((frontOverlay && o===frontOverlay) || (selectedOverlayObj && o===selectedOverlayObj)) o.setMap(map);
+          else (level<=3 ? o.setMap(map) : o.setMap(null));
+          if (frontOverlay && o===frontOverlay) setFrontZ(m,o); else setDefaultZ(m,o);
+        });
+        if (frontMarker && frontOverlay) setFrontZ(frontMarker, frontOverlay);
+      });
+    };
+
+    // 실제 생성
+    window.initMarkers(map, positions);
+  })();
+
+  /* ===== 자동완성 (순서 유지 부분수열 매칭 / 첫 초성 1글자 게이트 / 롤다운 / Enter=1번 자동선택) ===== */
+  (function(){
+    /* --- 드롭다운 스타일을 JS로 주입 --- */
+    const css = `
+      #suggest-box{
+        position:absolute; top:44px; left:0; right:0;
+        max-height:0; overflow:hidden;
+        border:1px solid #ccc; border-radius:10px;
+        background:rgba(255,255,255,0.96);
+        box-shadow:0 8px 20px rgba(0,0,0,.15);
+        z-index:610;
+        opacity:0; transform:translateY(-6px);
+        transition:max-height .22s ease, opacity .18s ease, transform .18s ease;
+        will-change:max-height, opacity, transform;
+        display:block; /* 항상 block, open 클래스로 열고 닫음 */
+      }
+      #suggest-box.open { max-height:320px; opacity:1; transform:translateY(0); }
+      #suggest-box .suggest-item { padding:10px 12px; cursor:pointer; display:flex; align-items:center; gap:8px; }
+      #suggest-box .suggest-item:hover, #suggest-box .suggest-item.active { background:#eef3ff; }
+      #suggest-box .suggest-empty { color:#777; padding:12px; }
+      #suggest-box .suggest-badge { font-size:12px; color:#666; }
+    `;
+    const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
+
+    const CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+    const CHO_SET = new Set(CHO);
+
+    // 한글→초성, 숫자/영문 유지, 기호/공백 제거
+    function buildKey(str){
+      let out=""; for (const ch of (str||"")){
+        const c = ch.charCodeAt(0);
+        if (c>=0xAC00 && c<=0xD7A3) out += CHO[Math.floor((c-0xAC00)/588)];
+        else if (CHO_SET.has(ch)) out += ch;
+        else if (c>=48&&c<=57) out += ch;                // 0-9
+        else if (c>=65&&c<=90) out += ch;                // A-Z
+        else if (c>=97&&c<=122) out += ch.toUpperCase(); // a-z -> A-Z
+      }
+      return out;
+    }
+
+    const kw  = document.getElementById("keyword");
+    const box = document.getElementById("suggest-box");
+    const MAX_ITEMS = 20;
+
+    const DATA = (window.SEL_SUGGEST||[]).map(it=>({
+      name: it.name, lat: it.lat, lng: it.lng, key: buildKey(it.name)
+    }));
+
+    /* --- 순서 유지 부분수열 매칭 & 점수 계산 ---
+       - 순서만 유지하면 중간 생략 허용
+       - score 우선순위: 더 이른 시작(start) → 더 짧은 윈도우(windowLen) → 이름 길이(name.length)
+       - 역순(예: 'ㅅㅂ'로 '보건소')은 허용하지 않음
+    */
+    function subseqScore(textKey, queryKey){
+      let i=0, j=0, start=-1;
+      while (i<textKey.length && j<queryKey.length){
+        if (textKey[i] === queryKey[j]){
+          if (start === -1) start = i;
+          j++;
+        }
+        i++;
+      }
+      if (j !== queryKey.length) return null; // 매칭 실패
+      const end = i-1;
+      const windowLen = (end - start + 1);
+      return { start, end, windowLen };
+    }
+
+    function match(q){
+      const k = buildKey(q);
+      if (!k) return [];
+      const found=[];
+      for (const it of DATA){
+        const sc = subseqScore(it.key, k); // 순서 유지만
+        if (sc) found.push({ ...it, _sc: sc });
+      }
+      found.sort((a,b)=>{
+        if (a._sc.start !== b._sc.start) return a._sc.start - b._sc.start;
+        if (a._sc.windowLen !== b._sc.windowLen) return a._sc.windowLen - b._sc.windowLen;
+        return a.name.length - b.name.length;
+      });
+      return found.slice(0, MAX_ITEMS);
+    }
+
+    function render(items){
+      box.innerHTML="";
+      if (!items.length){
+        const div=document.createElement("div");
+        div.className="suggest-empty"; div.textContent="검색 결과 없음";
+        box.appendChild(div); return;
+      }
+      const frag=document.createDocumentFragment();
+      items.forEach((it,idx)=>{
+        const div=document.createElement("div");
+        div.className="suggest-item"; div.dataset.idx=idx;
+        div.innerHTML=`<span>${it.name}</span><span class="suggest-badge">(${it.lat.toFixed(5)}, ${it.lng.toFixed(5)})</span>`;
+        div.addEventListener("mousedown", e=>{ applySelection(it); e.preventDefault(); });
+        frag.appendChild(div);
+      });
+      box.appendChild(frag);
+    }
+
+    /* --- 롤다운 open/close + keep-visible --- */
+    const openBox = () => { box.classList.add("open"); };
+    const closeBox = () => { box.classList.remove("open"); setActive(-1); box.scrollTop = 0; };
+
+    let active=-1;
+    function setActive(i){
+      const items=box.querySelectorAll(".suggest-item");
+      items.forEach((el,idx)=> el.classList.toggle("active", idx===i));
+      active=i;
+      if (i>=0 && items[i]){
+        const el=items[i];
+        const elTop=el.offsetTop, elBottom=elTop+el.offsetHeight;
+        const viewTop=box.scrollTop, viewBottom=viewTop+box.clientHeight;
+        if (elTop < viewTop) box.scrollTo({ top: elTop, behavior: "smooth" });
+        else if (elBottom > viewBottom) box.scrollTo({ top: elBottom - box.clientHeight, behavior: "smooth" });
+      }
+    }
+
+    function applySelection(item){
+      if (!item) return;
+      kw.value = item.name;
+      if (window.markers && window.kakao && window.kakao.maps){
+        const found = window.markers.find(m=>{
+          const p=m.getPosition();
+          return Math.abs(p.getLat()-item.lat)<1e-9 && Math.abs(p.getLng()-item.lng)<1e-9;
+        });
+        if (found){
+          kakao.maps.event.trigger(found, "mousedown");
+          setTimeout(()=>kakao.maps.event.trigger(found, "mouseup"), 0);
+          map.panTo(found.getPosition());
+        }
+      }
+      closeBox();
+      gateFirstCho = true; // 다음 입력 시작시 게이트 재활성화
+    }
+
+    // 실시간 갱신(IME 조합 중에도): compositionupdate + input 모두에서 schedule 호출
+    let rafId=null, gateFirstCho=true, prevVal="";
+    function schedule(q){
+      // 첫 글자가 단일 초성 1개면 제안 열지 않음
+      if (gateFirstCho && prevVal==="" && q.length===1 && new Set(['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ']).has(q)){
+        prevVal=q; closeBox(); return;
+      }
+      prevVal=q;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId=requestAnimationFrame(()=>{
+        rafId=null;
+        const items=match(q);
+        if (items.length===0){ closeBox(); return; }
+        render(items); openBox(); setActive(-1);
+      });
+    }
+
+    // IME 조합 중에도 실시간으로 반영
+    kw.addEventListener("compositionupdate", ()=> schedule(kw.value));
+    // 일반 입력(조합 완료/중 포함)
+    kw.addEventListener("input", e=>{
+      if (e.target.value.length>=2) gateFirstCho=false;
+      schedule(e.target.value);
+    });
+
+    // 키보드 조작: 방향키 이동 + Enter 처리(활성 없으면 1번 자동 선택)
+    kw.addEventListener("keydown", e=>{
+      const visible = box.classList.contains("open");
+      if (visible){
+        const items = box.querySelectorAll(".suggest-item");
+        if (e.key==="ArrowDown"){
+          e.preventDefault();
+          const next = active<items.length-1 ? active+1 : 0; setActive(next);
+        } else if (e.key==="ArrowUp"){
+          e.preventDefault();
+          const prev = active>0 ? active-1 : items.length-1; setActive(prev);
+        } else if (e.key==="Enter"){
+          e.preventDefault();
+          const list = match(kw.value);
+          if (list.length){
+            const pick = (active>=0 && active<list.length) ? list[active] : list[0];
+            applySelection(pick);
+          } else {
+            closeBox();
+          }
+        } else if (e.key==="Escape"){
+          closeBox();
+        }
+      } else if (e.key==="Enter"){
+        e.preventDefault();
+        const list = match(kw.value);
+        if (list.length) applySelection(list[0]); // 닫힌 상태에서도 1번 선택
+      }
+    });
+
+    kw.addEventListener("focus", ()=>{ if (kw.value) schedule(kw.value); });
+    kw.addEventListener("blur",  ()=> setTimeout(closeBox, 120));
+
+    // 검색 버튼: 현재 입력으로 매칭 후 1번 선택
+    document.getElementById('btnSearch')?.addEventListener('click', ()=>{
+      const list = match(kw.value||"");
+      if (list.length) applySelection(list[0]);
+      else closeBox();
+    });
+
+  })();
+
+  // ===== 실제 마커 생성 호출 =====
+  initMarkers(map, positions);
+
+}); // kakao.maps.load 끝
+</script>
+
 </body>
 </html>
